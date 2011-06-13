@@ -37,7 +37,7 @@ void loop()
   }
 }
 
-int read_char()
+char read_char()
 {
   // Wait until some data becomes available
   // on the USB cable (this will loop
@@ -74,12 +74,16 @@ char* read_json()
     this_value = read_char();
   }
   int nested_count = 1;    // Keep track of how deeply nested our braces are
-  int input_size = 2;      // The size of our char pointer (must be >= 2, for '{' and '}')
+  int pointer_size = 2;      // The size of our char pointer (must be >= 2, for '{' and '}')
   int read_so_far = 1;     // How much data we've read (used to ensure our pointer is big enough)
-  int i;                   // Loop indexing
-  char* result = (char*) malloc(sizeof(char)*input_size);    // Allocate our array
-  char* new_result;    // Used for increasing our array size as neccessary
+  char* result = (char*) malloc(sizeof(char)*pointer_size);    // This pointer will be our return value
+  char* new_result;    // Used during pointer reallocation
   result[0] = this_value;    // Set the first value to the '{' that we found
+  
+  // There are a few exceptions to the simple braced structure...
+  short in_quote = 0;
+  short in_escape = 0;
+  
   while (nested_count > 0)    // Loop until we've closed that first brace
   {
     Serial.print("Nested to ");
@@ -89,15 +93,15 @@ char* read_json()
     
     // See if we've got enough room to store it
     read_so_far++;
-    if (read_so_far > input_size)
+    if (read_so_far > pointer_size)
     {
       // Try to increase the size of our instruction pointer
-      char* new_result = (char*) realloc(result, (input_size+1));
+      char* new_result = (char*) realloc(result, (pointer_size+1));
       if (new_result)
       {
         // We succeeded in allocating enough memory. Let's use it.
         result = new_result;
-        input_size++;
+        pointer_size++;
       }
       else
       {
@@ -110,15 +114,41 @@ char* read_json()
     result[read_so_far-1] = this_value;
     
     // Handle this character
-    if (this_value == '{') {
-      nested_count++;
-    }
-    else {
-      if (this_value == '}') {
-        nested_count--;
+    if (in_quote) {
+      // String semantics: read in everything up to a non-escaped '"'
+      if (in_escape) {
+        in_escape = 0;
       }
       else {
-        // Some other character
+        if (this_value == '"') {
+          in_quote = 0;
+        }
+        if (this_value == '\\') {
+          in_escape = 1;
+        }
+      }
+    }
+    else {
+      // Object semantics: Read in everything up to a non-matched '}'
+      
+      // Recurse down a level
+      if (this_value == '{') {
+        nested_count++;
+      }
+      else {
+        // Come back up a level
+        if (this_value == '}') {
+          nested_count--;
+        }
+        else {
+          // Start a string
+          if (this_value == '"') {
+            in_quote = 1;
+          }
+          else {
+            // Some other character
+          }
+        }
       }
     }
   }
@@ -145,28 +175,54 @@ int json_length(char* json) {
   
   // We've got an open brace, so start at the next char
   int nesting = 1;
-  int length = 1;
   index++;
+  
+  // Take into account the various parsing rules of JSON
+  short in_quote = 0;
+  short in_escape = 0;
   
   // Now we loop until we've closed the initial brace
   while (nesting > 0) {
-    
-    // Recurse one level FIXME: We need to allow { in strings
-    if (json[index] == '{') {
-      nesting++;
-    }
-    else {
-      
-      // Go up one level FIXME: We need to allow } in strings
-      if (json[index] == '}') {
-        nesting--;
+    if (in_quote) {
+      // String semantics: run through everything up to a non-escaped '"'
+      if (in_escape) {
+        in_escape = 0;
       }
       else {
-        // Some other character
+        if (json[index] == '"') {
+          in_quote = 0;
+        }
+        else {
+          if (json[index] == '\\') {
+            in_escape = 1;
+          }
+        }
       }
     }
-    length++;
+    else {
+      // Object semantics: run through everything up to an unmatched '}'
+      
+      // Recurse one level
+      if (json[index] == '{') {
+        nesting++;
+      }
+      else {
+        // Go up one level
+        if (json[index] == '}') {
+          nesting--;
+        }
+        else {
+          // Start a string
+          if (json[index] == '"') {
+            in_quote = 1;
+          }
+          else {
+            // Some other character
+          }
+        }
+      }
+    }
     index++;
   }
-  return length;
+  return index;
 }
