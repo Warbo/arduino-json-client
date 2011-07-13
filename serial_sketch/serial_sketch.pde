@@ -19,8 +19,8 @@
 void setup()
 {
   delay(1000);    // Keep this here so we don't flood the serial line
-  Serial.println("Starting...");
   Serial.begin(9600);    // Set up Serial library at 9600 bps
+  Serial.println("{\"status\":\"ready\"}");
 }
 
 void loop()
@@ -36,8 +36,8 @@ void loop()
   else {
     // Perform whatever actions are defined for this input
     read_commands(input);
+    free(input);
   }
-  free(input);
 }
 
 char read_char()
@@ -47,7 +47,7 @@ char read_char()
   // forever if you don't send it anything)
   char data = -1;
   while ((Serial.available() < 0) || (data < 0)) {
-    delay(25);
+    delay(1);
     data = Serial.read();
   }
   return data;
@@ -96,15 +96,17 @@ char* read_json()
     if (read_so_far > pointer_size)
     {
       // Try to increase the size of our JSON pointer
-      // NOTE: We could be more efficient here, eg. doubling the
-      // pointer size at each realloc, but we favour minimum
-      // memory usage, so we just bump it up by 1 each time.
-      char* new_result = (char*) realloc(result, (pointer_size+1));
+      // NOTE: There are various strategies we could use here
+      // depending on what we want to conserve. Since we only
+      // build one JSON string at a time, and free it after
+      // we're done with it, we don't need to be massively
+      // conservative in our memory usage
+      char* new_result = (char*) realloc(result, (pointer_size*2));
       if (new_result)
       {
         // We succeeded in allocating enough memory. Let's use it.
         result = new_result;
-        pointer_size++;
+        pointer_size = pointer_size * 2;
       }
       else
       {
@@ -520,6 +522,9 @@ void run_command(char* name, char* value) {
   if (compare_strings(name,"mode")) {
     run_mode(value);    // Set pin mode
   }
+  if (compare_strings(name,"query")) {
+    run_query(value);
+  }
 }
 
 void run_read(char* value) {
@@ -543,6 +548,7 @@ void run_read(char* value) {
       if (value[index] == '"') {
         // We have a string. Let's see if it's what we're after
         if (compare_strings(value+index, "pin")) {
+          //Serial.println("Found pin");
           // This is the number of the pin to read
           // Find the associated digits
           index = index + value_length(value+index);    // Skip over the name
@@ -553,6 +559,7 @@ void run_read(char* value) {
             index++;    // Skip the colon
           }
           else {
+            //Serial.println("...1...");
             return;     // No colon. Abort.
           }
           while (value[index] == ' ') {
@@ -573,6 +580,7 @@ void run_read(char* value) {
           continue;    // Retest the while condition
         }
         if (compare_strings(value+index, "type")) {
+          //Serial.println("Found type");
           // This is the type of pin to read.
           // Find out whether it's analogue or digital.
           index = index + value_length(value+index);
@@ -602,10 +610,9 @@ void run_read(char* value) {
         }
       }
     }
-    if (pin > 0) {
+    if (pin >= 0) {
       // Send our result over USB
       // {"pinValue":{"type":"digital", "pin":123, "value":123}}
-      Serial.println();
       Serial.print("{\"pinValue\":{\"type\":");
       if (type == 1) {
         Serial.print("\"digital\"");
@@ -859,5 +866,18 @@ void run_mode(char* value) {
       }
       Serial.print("{}");    // Indicates success
     }
+  }
+}
+
+void run_query(char* value) {
+  // We use "query" as a generic name when all we want
+  // to send is a value. We simply branch based on the
+  // contents of value (we'd use a switch, but we would
+  // have to overload comparison with compare_strings)
+  if (compare_strings(value, "status")) {
+    // This is a generic ping request. We just report
+    // that we're ready so that whatever's on the other
+    // end knows that it can send commands to us.
+    Serial.println("{\"status\":\"ready\"}");
   }
 }
